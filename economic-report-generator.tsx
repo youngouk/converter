@@ -44,7 +44,9 @@ const EconomicReportGenerator: React.FC = () => {
   const [activeTab, setActiveTab] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(false);
   const [shareURL, setShareURL] = useState<string>('');
+  const [shortURL, setShortURL] = useState<string>('');
   const [loadingPercent, setLoadingPercent] = useState<number>(0);
+  const [printMode, setPrintMode] = useState<boolean>(false);
   const reportRef = useRef<HTMLDivElement>(null);
   
   // 페이지 로드 시 URL 파라미터 확인
@@ -57,7 +59,7 @@ const EconomicReportGenerator: React.FC = () => {
         setInputText(decodedText);
         parseText(decodedText);
       } catch (e) {
-        console.error("Error parsing shared URL:", e);
+        console.error("URL 파싱 오류:", e);
       }
     }
   }, []);
@@ -90,7 +92,7 @@ const EconomicReportGenerator: React.FC = () => {
         // 각 주차별 컨텐츠 파싱
         weekTexts.forEach((weekText, idx) => {
           const weekData: WeekData = {
-            title: weekTitles[idx] || `Week ${idx + 1}`,
+            title: weekTitles[idx] || `${idx + 1}주차`,
             quote: "",
             sections: []
           };
@@ -117,7 +119,7 @@ const EconomicReportGenerator: React.FC = () => {
             if (sIdx === 0 && !sectionTitles.length) return; // 첫 부분이 섹션이 아닌 경우 스킵
             
             const sectionData: Section = {
-              title: sectionTitles[sIdx - 1] || `Section ${sIdx}`,
+              title: sectionTitles[sIdx - 1] || `섹션 ${sIdx}`,
               subsections: []
             };
             
@@ -171,8 +173,9 @@ const EconomicReportGenerator: React.FC = () => {
         setLoadingPercent(100);
         setLoading(false);
       } catch (error) {
-        console.error("Error parsing text:", error);
+        console.error("텍스트 파싱 오류:", error);
         setLoading(false);
+        showToast('텍스트 파싱 중 오류가 발생했습니다.', 'error');
       }
     }, 100);
   };
@@ -205,6 +208,33 @@ const EconomicReportGenerator: React.FC = () => {
     const encodedText = btoa(encodeURIComponent(text));
     const url = `${window.location.origin}${window.location.pathname}?data=${encodedText}`;
     setShareURL(url);
+    
+    // URL 압축 시도 (첫 부분만 잘라서)
+    const maxLength = 100; // 최대 URL 길이
+    if (encodedText.length > maxLength) {
+      // 원본은 유지하되, 표시용으로만 짧게
+      const shortDisplayUrl = `${window.location.origin}${window.location.pathname}?data=${encodedText.substring(0, maxLength)}...`;
+      setShortURL(shortDisplayUrl);
+    } else {
+      setShortURL(url);
+    }
+  };
+
+  // URL 단축 서비스 사용 (이건 실제 구현 시 서버 API를 사용해야 함)
+  const shortenURL = async (): Promise<void> => {
+    try {
+      showToast('URL 압축 중...', 'info');
+      // 실제 구현 시 여기에 URL 단축 API 호출 코드가 들어갑니다
+      // 예: TinyURL, Bitly 등의 서비스
+      
+      // 임시로 표시용 URL 복사
+      navigator.clipboard.writeText(shareURL).then(() => {
+        showToast('URL이 클립보드에 복사되었습니다!');
+      });
+    } catch (err) {
+      console.error('URL 단축 오류:', err);
+      showToast('URL 단축에 실패했습니다.', 'error');
+    }
   };
   
   // 클립보드에 공유 URL 복사
@@ -212,60 +242,145 @@ const EconomicReportGenerator: React.FC = () => {
     navigator.clipboard.writeText(shareURL).then(() => {
       showToast('공유 URL이 클립보드에 복사되었습니다!');
     }).catch(err => {
-      console.error('Error copying to clipboard:', err);
+      console.error('클립보드 복사 오류:', err);
       showToast('클립보드 복사에 실패했습니다.', 'error');
     });
   };
 
   // 토스트 메시지 표시
-  const [toast, setToast] = useState<{message: string, visible: boolean, type: 'success' | 'error'}>({
+  const [toast, setToast] = useState<{message: string, visible: boolean, type: 'success' | 'error' | 'info'}>({
     message: '',
     visible: false,
     type: 'success'
   });
 
-  const showToast = (message: string, type: 'success' | 'error' = 'success'): void => {
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success'): void => {
     setToast({ message, visible: true, type });
     setTimeout(() => {
       setToast(prev => ({ ...prev, visible: false }));
     }, 3000);
   };
   
-  // PNG 다운로드
+  // PNG 다운로드 - 해상도 최적화
   const handleDownload = async (): Promise<void> => {
     if (!reportRef.current) return;
     
     try {
       setLoading(true);
-      showToast('이미지를 생성 중입니다... 잠시만 기다려주세요.');
+      showToast('이미지 생성 중입니다... 잠시만 기다려주세요.');
       
-      // @ts-ignore - CDN 외부 모듈 로드
-      const { default: html2canvas } = await import('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.esm.js');
+      // 인쇄 모드 활성화 (이미지 생성에 최적화된 레이아웃)
+      setPrintMode(true);
       
-      const canvas = await html2canvas(reportRef.current, {
-        scale: 2,
-        logging: false,
-        useCORS: true,
-        allowTaint: true
-      });
+      // 약간의 지연을 주어 레이아웃이 변경되도록 함
+      await new Promise(resolve => setTimeout(resolve, 300));
       
-      const link = document.createElement('a');
-      link.download = `economic-report-${parsedData[activeTab]?.title || 'default'}.png`;
-      link.href = canvas.toDataURL('image/png');
-      link.click();
-      
-      setLoading(false);
-      showToast('리포트가 PNG 이미지로 다운로드되었습니다!');
+      try {
+        // @ts-ignore
+        const html2canvas = await import('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.esm.js');
+        
+        const options = {
+          scale: 1.5, // 해상도 조정 - 너무 크면 용량이 커져서 적절한 값 사용
+          logging: false,
+          useCORS: true,
+          allowTaint: true,
+          // 가로/세로 비율 최적화
+          width: Math.min(reportRef.current.offsetWidth, 1200),
+          // 최대 높이 제한하여 해상도 문제 방지
+          height: Math.min(reportRef.current.offsetHeight, 3000)
+        };
+        
+        const canvas = await html2canvas.default(reportRef.current, options);
+        
+        // 이미지 품질 조정 (0.8은 80% 품질)
+        const link = document.createElement('a');
+        link.download = `경제리포트-${parsedData[activeTab]?.title || 'default'}.png`;
+        link.href = canvas.toDataURL('image/png', 0.8);
+        link.click();
+        
+        // 인쇄 모드 비활성화
+        setPrintMode(false);
+        setLoading(false);
+        showToast('리포트가 PNG 이미지로 다운로드되었습니다!');
+      } catch (importError) {
+        console.error('html2canvas 모듈 로드 오류:', importError);
+        showToast('이미지 생성 라이브러리를 로드할 수 없습니다.', 'error');
+        setPrintMode(false);
+        setLoading(false);
+      }
     } catch (error) {
-      console.error('Error generating image:', error);
+      console.error('이미지 생성 오류:', error);
+      setPrintMode(false);
       setLoading(false);
       showToast('이미지 생성 중 오류가 발생했습니다. 다시 시도해주세요.', 'error');
     }
   };
   
+  // 섹션 당 최대 높이 제한으로 이미지 분리 다운로드
+  const handleOptimizedDownload = async (): Promise<void> => {
+    if (!reportRef.current) return;
+    
+    try {
+      setLoading(true);
+      showToast('최적화된 이미지 생성 중... 잠시만 기다려주세요.');
+      
+      // 인쇄 모드 활성화
+      setPrintMode(true);
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      try {
+        // @ts-ignore
+        const html2canvas = await import('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.esm.js');
+        
+        // 리포트를 좌우 섹션으로 분리해서 캡처
+        const sections = reportRef.current.querySelectorAll('.report-section');
+        const canvases: HTMLCanvasElement[] = [];
+        
+        for (let i = 0; i < sections.length; i++) {
+          const section = sections[i] as HTMLElement;
+          setLoadingPercent(Math.floor((i / sections.length) * 100));
+          
+          const canvas = await html2canvas.default(section, {
+            scale: 2,
+            logging: false,
+            useCORS: true,
+            allowTaint: true
+          });
+          
+          canvases.push(canvas);
+        }
+        
+        // 각 섹션 이미지 다운로드
+        for (let i = 0; i < canvases.length; i++) {
+          const link = document.createElement('a');
+          link.download = `경제리포트-${parsedData[activeTab]?.title}-섹션${i+1}.png`;
+          link.href = canvases[i].toDataURL('image/png', 0.9);
+          link.click();
+          await new Promise(resolve => setTimeout(resolve, 200)); // 다운로드 간 딜레이
+        }
+        
+        // 모드 초기화
+        setPrintMode(false);
+        setLoading(false);
+        setLoadingPercent(100);
+        showToast(`총 ${canvases.length}개의 이미지로 분할 저장되었습니다!`);
+      } catch (importError) {
+        console.error('html2canvas 모듈 로드 오류:', importError);
+        showToast('이미지 생성 라이브러리를 로드할 수 없습니다.', 'error');
+        setPrintMode(false);
+        setLoading(false);
+      }
+    } catch (error) {
+      console.error('분할 이미지 생성 오류:', error);
+      setPrintMode(false);
+      setLoading(false);
+      showToast('이미지 생성 중 오류가 발생했습니다.', 'error');
+    }
+  };
+  
   // 주요 섹션 컴포넌트
   const Section: React.FC<SectionProps> = ({ title, children }) => (
-    <div className="mb-8">
+    <div className={`mb-8 report-section ${printMode ? 'print-section' : ''}`}>
       <h2 className="text-xl font-bold mb-4 text-indigo-800 border-b border-indigo-100 pb-2">
         {title}
       </h2>
@@ -314,8 +429,12 @@ const EconomicReportGenerator: React.FC = () => {
   return (
     <div className="max-w-6xl mx-auto p-3 sm:p-4 bg-gray-50 min-h-screen">
       <header className="text-center py-4 sm:py-6">
-        <h1 className="text-2xl sm:text-3xl font-bold text-indigo-900">경제 리포트 생성기</h1>
-        <p className="text-gray-600 mt-2 text-sm sm:text-base">경제 뉴스 텍스트를 붙여넣고 깔끔한 형식의 리포트를 생성하세요</p>
+        <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-indigo-700 to-purple-700 bg-clip-text text-transparent">
+          경제 리포트 생성기
+        </h1>
+        <p className="text-gray-600 mt-2 text-sm sm:text-base">
+          경제 뉴스 텍스트를 붙여넣고 깔끔한 형식의 리포트를 생성하세요
+        </p>
       </header>
       
       <div className="mb-6 bg-white rounded-xl shadow-sm p-4">
@@ -352,25 +471,43 @@ const EconomicReportGenerator: React.FC = () => {
               <div className="flex flex-col sm:flex-row gap-2">
                 <button
                   type="button"
-                  onClick={copyShareURL}
+                  onClick={shortenURL}
                   className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 px-5 rounded-lg transition shadow-sm hover:shadow-md flex items-center justify-center"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
                   </svg>
-                  공유 URL 복사
+                  압축 URL 생성/복사
                 </button>
-                <button
-                  type="button"
-                  onClick={handleDownload}
-                  className="bg-purple-600 hover:bg-purple-700 text-white font-medium py-2.5 px-5 rounded-lg transition shadow-sm hover:shadow-md flex items-center justify-center disabled:opacity-70 disabled:cursor-not-allowed"
-                  disabled={loading}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                  </svg>
-                  PNG로 다운로드
-                </button>
+                <div className="dropdown inline-block relative">
+                  <button
+                    type="button"
+                    className="bg-purple-600 hover:bg-purple-700 text-white font-medium py-2.5 px-5 rounded-lg transition shadow-sm hover:shadow-md flex items-center justify-center disabled:opacity-70 disabled:cursor-not-allowed"
+                    disabled={loading}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    이미지 다운로드
+                    <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path>
+                    </svg>
+                  </button>
+                  <div className="dropdown-menu absolute hidden text-gray-700 pt-1 right-0 w-48 z-10">
+                    <button
+                      onClick={handleDownload}
+                      className="bg-white hover:bg-gray-100 py-2 px-4 w-full text-left text-sm block whitespace-no-wrap border-b border-gray-200"
+                    >
+                      일반 이미지로 저장
+                    </button>
+                    <button
+                      onClick={handleOptimizedDownload}
+                      className="bg-white hover:bg-gray-100 py-2 px-4 w-full text-left text-sm block whitespace-no-wrap"
+                    >
+                      최적화 이미지로 저장
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -391,13 +528,18 @@ const EconomicReportGenerator: React.FC = () => {
       <div className={`fixed bottom-4 right-4 px-4 py-3 rounded-lg shadow-lg transition-opacity duration-300 ${
         toast.visible ? 'opacity-100' : 'opacity-0 pointer-events-none'
       } ${
-        toast.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'
+        toast.type === 'success' ? 'bg-emerald-600 text-white' : 
+        toast.type === 'error' ? 'bg-red-600 text-white' : 
+        'bg-blue-600 text-white'
       }`}>
         {toast.message}
       </div>
       
       {parsedData.length > 0 && (
-        <div ref={reportRef} className="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div 
+          ref={reportRef} 
+          className={`bg-white rounded-xl shadow-lg overflow-hidden ${printMode ? 'print-mode' : ''}`}
+        >
           <div className="p-4 sm:p-6">
             {/* 커스텀 탭 네비게이션 */}
             <div className="flex border-b mb-6 overflow-x-auto scrollbar-hide">
@@ -431,7 +573,7 @@ const EconomicReportGenerator: React.FC = () => {
                 </div>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-8">
-                  <div>
+                  <div className="report-section">
                     {parsedData[activeTab].sections.slice(0, Math.ceil(parsedData[activeTab].sections.length / 2)).map((section, idx) => (
                       <Section key={idx} title={section.title}>
                         {section.subsections.map((subsection, subIdx) => (
@@ -454,7 +596,7 @@ const EconomicReportGenerator: React.FC = () => {
                     ))}
                   </div>
                   
-                  <div>
+                  <div className="report-section">
                     {parsedData[activeTab].sections.slice(Math.ceil(parsedData[activeTab].sections.length / 2)).map((section, idx) => (
                       <Section key={idx} title={section.title}>
                         {section.subsections.map((subsection, subIdx) => (
@@ -482,10 +624,31 @@ const EconomicReportGenerator: React.FC = () => {
           </div>
           
           <footer className="text-center text-gray-500 text-sm mt-6 pb-6 px-4">
-            © 2025 Economic News & Trends Report
+            © 2025 경제 뉴스 & 트렌드 리포트
           </footer>
         </div>
       )}
+
+      {/* 드롭다운 스타일 */}
+      <style jsx>{`
+        .dropdown:hover .dropdown-menu {
+          display: block;
+        }
+        .print-mode {
+          max-width: 1200px;
+          margin: 0 auto;
+        }
+        .print-section {
+          break-inside: avoid;
+          page-break-inside: avoid;
+        }
+        @media print {
+          .print-mode {
+            width: 100%;
+            max-width: none;
+          }
+        }
+      `}</style>
     </div>
   );
 };
